@@ -1,6 +1,5 @@
-LoadData <- function(file){
-
-  return("crap")
+loadData <- function(file){
+  data('win_1')
 }
 
 ##' Function do_AR_all
