@@ -358,7 +358,7 @@ w_mor2<-function(X){
 unimodal3<-function(C,obs,RT_LIMIT){
 
   #cp	<-	excel_round(median(which.max(colMeans(t(C)))))
-  cp  <-	round(median(which.max(colMeans(t(C)))))
+  cp  <-	round(median(which.max(colMeans(t(C))))) # cp is always only 1 long
   if(!length(cp)){
     C		<-	C*0
     cp		<-	0
@@ -366,10 +366,10 @@ unimodal3<-function(C,obs,RT_LIMIT){
   }else{
     for(i in 1:obs){
       xpeak	<-	peak_pick(t(C[,i]))$xpeak
-      mp		<-	which(as.logical(xpeak))
-      if(length(mp)){
-        if(which.min(abs(mp-cp)))
-          mp	<-	mp[which.min(abs(mp-cp))]
+      mp		<-	which(as.logical(xpeak)) # 0 to some (maybe 6 -7), mp are indices
+      if(length(mp)){ # can actually happen that there is NaN
+        if(which.min(abs(mp-cp))) #which.min returns the index of the first min
+          mp	<-	mp[which.min(abs(mp-cp))] #Here length mp will always be one
         if(abs(mp-cp)<RT_LIMIT){
           D			<-	diff(C[1:mp,i])
           if(any(D<0))
@@ -377,6 +377,7 @@ unimodal3<-function(C,obs,RT_LIMIT){
 
           else
             poss	<-	1
+
 
           for(j in poss:1)
             C[j,i]	<-	min(C[j:mp,i])
