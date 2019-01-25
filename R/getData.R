@@ -2,6 +2,64 @@ loadData <- function(file){
   data('win_1')
 }
 
+importDatForR <- function(fileName, mzs, samples, scans ){
+
+  inputMatrix <- read.table(file=fileName)
+  dataArray <- array(0, dim=c(scans, length(mzs), samples))
+
+  for(i in 1:scans){
+    for(j in 1:samples){
+      for(k in mzs){
+        dataArray[i,k,j] <- inputMatrix[ (j-1) * length(mzs) + k, i ]
+      }
+    }
+  }
+  return(dataArray)
+}
+
+importDatForJava <- function(fileName, mzs, samples, scans){
+
+  inputMatrix <- read.table(file=fileName)
+  outputMatrix <- matrix(0, length(mzs)*scans, samples)
+
+  for(i in 1:scans){
+    for(j in 1:samples){
+      for(k in mzs){
+        outputMatrix[ (k-1)*scans + i , j ] <- inputMatrix[ (j-1) * length(mzs) + k, i ]
+      }
+    }
+  }
+  return(outputMatrix)
+}
+
+
+generateFiles <- function(fileName, mzs, samples, scans){
+
+  inputMatrix <- read.table(file=fileName)
+  outputMatrix <- matrix(0, length(mzs)*scans, samples)
+  dataArray <- array(0, dim=c(scans, length(mzs), samples))
+
+  for(i in 1:scans){
+    for(j in 1:samples){
+      for(k in mzs){
+        outputMatrix[ (k-1)*scans + i , j ] <- inputMatrix[ (j-1) * length(mzs) + k, i ]
+        dataArray[i,k,j] <- inputMatrix[ (j-1) * length(mzs) + k, i ]
+      }
+    }
+  }
+
+  fileNameRData <- paste(tools::file_path_sans_ext(fileName), ".Rdata", sep="")
+  fileNameTxt <- paste(tools::file_path_sans_ext(fileName), ".txt", sep="")
+
+  save(dataArray, file=fileNameRData)
+  write.table(outputMatrix, file=fileNameTxt, row.names=FALSE, col.names=FALSE, sep="\t")
+
+}
+
+
+
+
+
 ##' Function do_AR_all
 ##'
 ##' Function do_AR_all
@@ -32,7 +90,10 @@ do_AR_all <- function(x,NL,RP,RT_LIMIT,SCAN_RANGE){
   Xmean				<-	apply(x,2,function(x) apply(x,1,sum))
   rm(x)
   X[,noise]		<-	0
+
+  # estimate how many components there might be be
   max_R				<-	qr(X[,setdiff(1:length(ind),noise)])$rank
+
   S						<-	abs(pca(X,1)$p)
   vars				<-	which(as.logical(SCAN_RANGE))
   cat("-----------------------------\n")
@@ -41,7 +102,12 @@ do_AR_all <- function(x,NL,RP,RT_LIMIT,SCAN_RANGE){
   while(OK_out>0){
     iter	<-	0
     C 		<-  numeric()
+
+    # proceed if number of components does not estimate number
+    # of estimated components
     if(max_R >= R){
+      # if there is more than one component, estimate the mass
+      # mass profiles from Xmean using pure algo
       if(R > 1){
         p		<-	pure(Xmean[,vars],R,0.01)
         sp  <-  p$sp
@@ -57,8 +123,6 @@ do_AR_all <- function(x,NL,RP,RT_LIMIT,SCAN_RANGE){
       dif			<-	1
       C			<-	X%*%S%*%ginv(t(S)%*%S,tol=.Machine$double.eps^2)
 
-
-
       C[C<0]		<-	0
       out			<-	unimodal2(C,R,var,obs,RT_LIMIT)
       C	  		<-  out$C
@@ -72,8 +136,9 @@ do_AR_all <- function(x,NL,RP,RT_LIMIT,SCAN_RANGE){
         S[S<0]		<-	0
         S 			<-  apply(S,2,function(S) S/sum(S))
 
-        if(any(is.na(S)))
+        if(any(is.na(S))){
           break
+        }
 
         C	<-	X%*%S%*%ginv(t(S)%*%S,tol=.Machine$double.eps^2)
 
@@ -357,7 +422,8 @@ w_mor2<-function(X){
 ##' @return C, CP
 unimodal3<-function(C,obs,RT_LIMIT){
 
-  #cp	<-	excel_round(median(which.max(colMeans(t(C)))))
+  ### cp = center of peak, Median index from max values of each chromatographic
+  ### profile in C
   cp  <-	round(median(which.max(colMeans(t(C))))) # cp is always only 1 long !!!! This could be wrong in the R version !!!!
   if(!length(cp)){
     C		<-	C*0
@@ -366,39 +432,93 @@ unimodal3<-function(C,obs,RT_LIMIT){
   }else{
     for(i in 1:obs){
       xpeak	<-	peak_pick(t(C[,i]))$xpeak
+
+      ## get the indices of maximum peaks (better local maxima) found in peak_pick
       mp		<-	which(as.logical(xpeak)) # 0 to some (maybe 6 -7), mp are indices
-      if(length(mp)){ # can actually happen that there is NaN
-        if(which.min(abs(mp-cp))) #which.min returns the index of the first min
-          mp	<-	mp[which.min(abs(mp-cp))] #Here length mp will always be one
+
+      ## Check if there is a local maxima at all, else fill the current observation
+      ## (C row) with zero's and process the next observation
+      if(length(mp)){
+
+        ## find the index of the local maxima the closest to cp, the center of peak
+        ## reset mp to contain only this value
+        if(which.min(abs(mp-cp))){
+          mp	<-	mp[which.min(abs(mp-cp))]
+        }
+
+        ## Check whether the difference between cp (center of peak) and the closest
+        ## local maxima is within the limit of Retention time precision (RT_LIMIT)
+        ## else fill the current observation (C vector row) with zero's and process
+        ## the next observation
         if(abs(mp-cp)<RT_LIMIT){
+
+          #------Remove local maxima before the absolut maxima-------
+          # calculate the differences D from the begin of the chromatographic profile until
+          # the found local maxima mp.
           D			<-	diff(C[1:mp,i])
-          if(any(D<0))
+
+          # Are there any differences below 0 if so, put highest index
+          # of such an occurence into 'poss'. Each such index represents
+          # the first from the number number which result in a negative
+          # difference
+          if(any(D<0)){
             poss	<-	max(which(D<0))
-
-          else
+          } else {
             poss	<-	1
+          }
 
 
+          # For each index j which runs from current poss down to zero/one
+          # rewrite the corresponding index in C by the minimum of values
+          # between j and mp in C, current sample row.
           for(j in poss:1)
             C[j,i]	<-	min(C[j:mp,i])
 
+          #---------Remove local maxima after the  absolut maxima
+          # calculate differences from the maxpeak (mp) to the end
           D			<-	diff(C[mp:nrow(C),i])
 
+          # is there any difference in D that is larger than zero
+          # if so find the smallest index (in case there are several such)
+          # where D is larger than zero and store it in 'poss'
           if(length(which(D>0)))
             poss	<-	min(which(D>0))
-
           else
             poss	<-	FALSE
 
+          # if increasing signal after peak top available
+          # rewrite for each index j which runs from maxpeak (mp) minus 1
+          # plus poss until the end by the minimum of values
+          # between mp until j in C, current sample row.
           if(poss)
             for(j in (mp-1+poss):nrow(C))
-              C[j,i]	<-	min(C[mp:j,i])
+              C[j,i]	<-	min(C[mp:j,i])  ## Crash in JAVA version
 
-          # Correction of strange peaks
-          knew						<-  C[-which(diff(C[,i]) == 0),i]
+
+
+          # Correction of strange peaks (most likely to happen when above
+          # corrections were applied -> negative diff before mp, positive diff before mp)
+          # find if there is any zero diff in C for current sample
+          zeroDiff <- which(diff(C[,i]) == 0)
+          # write signal for current sample except indices with zeroDiff into knew (k new)
+          # else write the whole signal into knew
+          if(length(zeroDiff)) {
+            knew <- C[-zeroDiff,i]
+          } else {
+            knew <- C[,i]
+          }
+
+          # from knew find the index of the max value in knew
           mpnew						<-	which.max(knew)
+
+          # make new zero vector same length as signal vector
           k							<-	C[,i]*0
+          # fit knew into k from index one plus mp minus mpnew until index length of knew plus
+          # the difference between mp and mpnew
+          #print(length(knew)+mp-mpnew)
+          #cat(i, ") ", length(knew), ", ", mp,", ", mpnew, ", ", sum(xpeak), "\n", sep ='' )
           k[1:length(knew)+mp-mpnew]	<-	knew
+          # write k vector into C for current sample
           C[,i]	<-	k
 
         }else
@@ -413,7 +533,17 @@ unimodal3<-function(C,obs,RT_LIMIT){
 ##' Function peak_pick
 ##'
 ##' Function peak_pick
-##' Function to find peaks
+##' Function to find peaks. After applying a savitzky-golay smooth,
+##' local maxima are detected. As condition, the 2 scans before
+##' and after the current scan are tested for being smaller than
+##' the current scan. As noise filter, the median value of the
+##' all signals from the chromatographic profile/sample under
+##' investigation is used. For sequential true conditions with a
+##' difference of less than 3 in signal, the smaller true
+##' condition is removed. 'xout' is a vector of the same length
+##' as the chromatographic profile x with zero values except for
+##' the found local maxima for which respective values of x are shown.
+##'
 ##' @param x
 ##' @return xpeak, xout
 peak_pick<-function(x){
