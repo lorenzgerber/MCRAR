@@ -2,6 +2,16 @@ loadData <- function(file){
   data('win_1')
 }
 
+
+import_from_txt <- function(filename){
+
+  con <- file(filename,"r")
+  first_line <- readLines(con,n=1)
+  close(con)
+
+
+}
+
 importDatForR <- function(fileName, mzs, samples, scans ){
 
   inputMatrix <- read.table(file=fileName)
@@ -16,8 +26,8 @@ importDatForR <- function(fileName, mzs, samples, scans ){
   }
   return(dataArray)
 }
-
-importDatForJava <- function(fileName, mzs, samples, scans){
+### Format for java is a textfile
+importDatForJava <- function(rileName, mzs, samples, scans){
 
   inputMatrix <- read.table(file=fileName)
   outputMatrix <- matrix(0, length(mzs)*scans, samples)
@@ -33,23 +43,32 @@ importDatForJava <- function(fileName, mzs, samples, scans){
 }
 
 
-generateFiles <- function(fileName, mzs, samples, scans){
+generateFiles <- function(rootFileName, mzs, samples, scans){
 
-  inputMatrix <- read.table(file=fileName)
+  pathFileNameData <- paste('./Model samples/', rootFileName, '.dat', sep='')
+  pathFileNameBG <- paste('./Model samples_bg_corr/bg_', rootFileName, '.Rdata', sep ='')
+  inputMatrix <- read.table(file=pathFileNameData)
+  load(pathFileNameBG)
+
   outputMatrix <- matrix(0, length(mzs)*scans, samples)
   dataArray <- array(0, dim=c(scans, length(mzs), samples))
 
+  ### Transforming the input data to match the background correction table
   for(i in 1:scans){
     for(j in 1:samples){
       for(k in mzs){
-        outputMatrix[ (k-1)*scans + i , j ] <- inputMatrix[ (j-1) * length(mzs) + k, i ]
+        #outputMatrix[ (k-1)*scans + i , j ] <- inputMatrix[ (j-1) * length(mzs) + k, i ]
         dataArray[i,k,j] <- inputMatrix[ (j-1) * length(mzs) + k, i ]
       }
     }
   }
 
-  fileNameRData <- paste(tools::file_path_sans_ext(fileName), ".Rdata", sep="")
-  fileNameTxt <- paste(tools::file_path_sans_ext(fileName), ".txt", sep="")
+  dataArray <- dataArray - BL
+  dataArray[dataArray < 0] <- 0
+  outputMatrix <- matrix(dataArray, scans*length(mzs), samples)
+
+  fileNameRData <- paste(rootFileName, ".Rdata", sep="")
+  fileNameTxt <- paste(rootFileName, ".txt", sep="")
 
   save(dataArray, file=fileNameRData)
   write.table(outputMatrix, file=fileNameTxt, row.names=FALSE, col.names=FALSE, sep="\t")
@@ -87,7 +106,7 @@ do_AR_all <- function(x,NL,RP,RT_LIMIT,SCAN_RANGE){
   noise				<-	which(ind<NL)
   x[,noise,]			<-	0
   ssX					<-  sum(apply(x,3,ss))
-  Xmean				<-	apply(x,2,function(x) apply(x,1,sum))
+  Xmean				<-	apply(x,2,function(x) apply(x,1,sum))/dim(x)[3]
   rm(x)
   X[,noise]		<-	0
 
@@ -453,6 +472,7 @@ unimodal3<-function(C,obs,RT_LIMIT){
         if(abs(mp-cp)<RT_LIMIT){
 
           #------Remove local maxima before the absolut maxima-------
+
           # calculate the differences D from the begin of the chromatographic profile until
           # the found local maxima mp.
           D			<-	diff(C[1:mp,i])
@@ -513,10 +533,9 @@ unimodal3<-function(C,obs,RT_LIMIT){
 
           # make new zero vector same length as signal vector
           k							<-	C[,i]*0
+
           # fit knew into k from index one plus mp minus mpnew until index length of knew plus
           # the difference between mp and mpnew
-          #print(length(knew)+mp-mpnew)
-          #cat(i, ") ", length(knew), ", ", mp,", ", mpnew, ", ", sum(xpeak), "\n", sep ='' )
           k[1:length(knew)+mp-mpnew]	<-	knew
           # write k vector into C for current sample
           C[,i]	<-	k
